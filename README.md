@@ -1,97 +1,189 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# MyBMS
 
-# Getting Started
+A personal, general-purpose BLE scanner and control app for a lithium BMS (Battery
+Management System) — built for monitoring/controlling the battery on an e-bike and
+an electric rickshaw. It pairs with exactly one BLE device (chosen by you) and only
+ever auto-connects to that device afterwards.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+Stack: React Native + TypeScript, [`react-native-ble-plx`](https://github.com/dotintent/react-native-ble-plx)
+for BLE, `@react-native-async-storage/async-storage` for local persistence,
+`@react-navigation` for the Pairing/Dashboard/Settings screens.
 
-## Step 1: Start Metro
+## Project structure
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+```
+App.tsx                        Root component (providers + navigation)
+src/
+  types/bms.ts                 Shared domain types (telemetry, connection status, etc.)
+  protocol/
+    BMSProtocol.ts             Interface: readTelemetry / setDischarge / setCharge
+    BaseBMSProtocol.ts         Optional base class with GATT read/write/notify helpers
+    GenericBMSProtocol.ts      <-- PLUG YOUR REAL BMS COMMAND BYTES IN HERE
+    index.ts                   Exports `activeBMSProtocol` used by the rest of the app
+  ble/
+    BleService.ts              Thin wrapper over react-native-ble-plx's BleManager
+    PairedDeviceConnector.ts   "Only ever reconnect to the paired device" state machine
+  storage/
+    PairingStorage.ts          Persists the paired device id/name
+    ActionLogStorage.ts        Persists the last 5 charge/discharge toggle actions
+  permissions/blePermissions.ts  Android runtime BLE/location permission handling
+  context/BleContext.tsx       Central app state: permissions, connection, telemetry, actions
+  navigation/RootNavigator.tsx Pairing vs. Dashboard/Settings/RePair screen switch
+  screens/                     PairingScreen, DashboardScreen, SettingsScreen
+  components/                  PermissionBanner, DeviceListItem, TelemetryCard, ToggleRow, ...
+```
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+## Wiring up your real BMS
+
+Nothing in this app guesses at your BMS's command bytes. Everything talks to the
+device through the `BMSProtocol` interface (`src/protocol/BMSProtocol.ts`):
+
+```ts
+readTelemetry(device): Promise<BMSTelemetry>
+setDischarge(device, enabled): Promise<void>
+setCharge(device, enabled): Promise<void>
+```
+
+Once you have your chipset's protocol doc (or reverse-engineered bytes), implement
+these in `src/protocol/GenericBMSProtocol.ts` (rename it if you like) using the
+`writeCommand` / `readValue` / `writeAndAwaitNotification` helpers from
+`BaseBMSProtocol`, then confirm `src/protocol/index.ts` still points
+`activeBMSProtocol` at it. No other file needs to change — the BLE layer, screens,
+and action log are all protocol-agnostic.
+
+Until you do that, the app runs fine end-to-end (scanning, pairing, reconnect,
+persistence) but telemetry reads / toggle commands will throw a clear
+"not implemented" error, shown inline on the Dashboard.
+
+## Prerequisites
+
+- Node.js — the toolchain is pinned to `>= 22.11.0` in `package.json`. It also works
+  with Node 20.x (tested during development) but you'll see an `EBADENGINE`
+  warning from npm; upgrade if you hit odd issues.
+- A real Android or iOS device is **strongly recommended** for testing. Emulators/
+  simulators generally have no working Bluetooth radio, so BLE scanning will not
+  find real devices there — you can only verify the UI shell on an emulator.
+- Android: Android Studio + SDK (API 24+ / compileSdk 36), a device with **USB
+  debugging enabled**.
+- iOS (macOS only): Xcode + CocoaPods.
+
+## Running locally
+
+### 1. Install dependencies
 
 ```sh
-# Using npm
+npm install
+```
+
+### 2. Start Metro (the JS dev server)
+
+```sh
 npm start
-
-# OR using Yarn
-yarn start
 ```
 
-## Step 2: Build and run your app
+Leave this running in its own terminal.
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+### 3. Android — run on a real device (recommended)
 
-### Android
+1. Enable Developer Options → USB debugging on your phone and plug it in via USB.
+2. Confirm it shows up:
+   ```sh
+   adb devices
+   ```
+3. Build, install, and launch:
+   ```sh
+   npm run android
+   ```
+   If you have multiple devices/emulators attached, target yours explicitly:
+   ```sh
+   npx react-native run-android --deviceId=<id-from-adb-devices>
+   ```
+
+The app will request Bluetooth permission (Android 12+: `BLUETOOTH_SCAN` /
+`BLUETOOTH_CONNECT`; Android 11 and below: location permission, which Android
+requires for BLE scan results to be delivered at all). Grant it, then use "Scan
+for nearby devices" on the Pairing screen — stand near your battery so its
+advertisement is the strongest signal in the list.
+
+### 3b. Android — emulator (UI-only smoke test)
 
 ```sh
-# Using npm
 npm run android
-
-# OR using Yarn
-yarn android
 ```
 
-### iOS
+Works for checking screens/navigation render correctly, but scanning won't find
+any real BMS since AVDs don't expose a Bluetooth radio.
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
-```
-
-Then, and every time you update your native dependencies, run:
+### 4. iOS (macOS only)
 
 ```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
+bundle install          # first time only
+bundle exec pod install --project-directory=ios
 npm run ios
-
-# OR using Yarn
-yarn ios
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+BLE works on physical iOS devices; the Simulator has no Bluetooth radio at all,
+so use a real iPhone for anything BLE-related.
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+### Reloading / dev menu
 
-## Step 3: Modify your app
+- Android: press `R` twice, or `Ctrl+M` (Linux/Windows) / `Cmd+M` (macOS) for the
+  dev menu.
+- iOS: `Cmd+D` in the Simulator, or shake a physical device.
 
-Now that you have successfully run the app, let's make changes!
+## Building an installable APK
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+For sideloading onto your own phone (the one that'll ride along and talk to the
+battery), a **debug APK** is usually enough and doesn't require setting up
+signing:
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+```sh
+cd android
+./gradlew assembleDebug
+```
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+Output: `android/app/build/outputs/apk/debug/app-debug.apk`. Install it with:
 
-## Congratulations! :tada:
+```sh
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+```
 
-You've successfully run and modified your React Native App. :partying_face:
+or copy the file to the phone and open it (allow "install unknown apps" for
+whichever app you copy it with).
 
-### Now what?
+### Release APK (smaller, optimized, no dev menu)
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+1. Generate a signing key (first time only) and keep it somewhere safe — you'll
+   need the same key for every future update:
+   ```sh
+   keytool -genkeypair -v -storetype PKCS12 \
+     -keystore mybms-release.keystore -alias mybms -keyalg RSA -keysize 2048 -validity 10000
+   ```
+2. Reference it from `android/gradle.properties` (don't commit real passwords —
+   use environment variables or `~/.gradle/gradle.properties` instead for
+   anything beyond local personal use):
+   ```properties
+   MYBMS_UPLOAD_STORE_FILE=mybms-release.keystore
+   MYBMS_UPLOAD_KEY_ALIAS=mybms
+   MYBMS_UPLOAD_STORE_PASSWORD=********
+   MYBMS_UPLOAD_KEY_PASSWORD=********
+   ```
+   and wire those properties into the `signingConfigs.release` block in
+   `android/app/build.gradle` (by default the template ships with the debug
+   keystore signing release builds too, which is fine for strictly personal use
+   and lets you skip this step).
+3. Build:
+   ```sh
+   cd android
+   ./gradlew assembleRelease
+   ```
+   Output: `android/app/build/outputs/apk/release/app-release.apk`.
+4. Install the same way as above with `adb install -r ...`.
 
-# Troubleshooting
+## Notes / known quirks
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+- The project folder name contains a space (`BAT BMS`). This is fine for the JS/
+  Metro/Gradle tooling used here, but some native build tools (older Xcode/CMake
+  setups) dislike spaces in paths — if you hit obscure native build failures,
+  moving the project to a space-free path is the first thing to try.
+- `npm install` prints an `EBADENGINE` warning for Node — see Prerequisites above.

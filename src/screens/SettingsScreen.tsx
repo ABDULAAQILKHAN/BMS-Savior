@@ -1,8 +1,18 @@
 import React from 'react';
-import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  FlatList,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useBle } from '../context/BleContext';
 import { colors, spacing } from '../theme';
 import type { ActionLogEntry } from '../types/bms';
+import type { GattCharacteristicSummary, GattServiceSummary } from '../types/gatt';
 
 function formatTimestamp(ts: number): string {
   const date = new Date(ts);
@@ -14,8 +24,30 @@ function describeEntry(entry: ActionLogEntry): string {
   return `${noun} turned ${entry.value ? 'ON' : 'OFF'}`;
 }
 
+function formatCharacteristicFlags(c: GattCharacteristicSummary): string {
+  const flags: string[] = [];
+  if (c.isReadable) flags.push('R');
+  if (c.isWritableWithResponse) flags.push('W');
+  if (c.isWritableWithoutResponse) flags.push('WNR');
+  if (c.isNotifiable) flags.push('N');
+  if (c.isIndicatable) flags.push('I');
+  return flags.length ? flags.join(',') : 'none';
+}
+
+function formatGattSummary(summary: GattServiceSummary[]): string {
+  return summary
+    .map(service => {
+      const chars = service.characteristics
+        .map(c => `    ${c.uuid}  [${formatCharacteristicFlags(c)}]`)
+        .join('\n');
+      return `Service ${service.serviceUUID}\n${chars || '    (no characteristics)'}`;
+    })
+    .join('\n\n');
+}
+
 export function SettingsScreen() {
-  const { pairedDevice, actionLog, forgetDevice } = useBle();
+  const { pairedDevice, actionLog, forgetDevice, connectionStatus, gattSummary, gattSummaryError } =
+    useBle();
 
   const handleForget = () => {
     Alert.alert(
@@ -37,7 +69,7 @@ export function SettingsScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Paired device</Text>
         <View style={styles.card}>
@@ -64,7 +96,30 @@ export function SettingsScreen() {
           ListEmptyComponent={<Text style={styles.empty}>No actions logged yet.</Text>}
         />
       </View>
-    </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Diagnostics — connected device's GATT table</Text>
+        <Text style={styles.helperText}>
+          Real service/characteristic UUIDs read from the connected device, for wiring up its
+          BMSProtocol. Long-press to select and copy.
+        </Text>
+        {connectionStatus !== 'connected' ? (
+          <Text style={styles.empty}>Connect to your BMS to see this.</Text>
+        ) : gattSummaryError ? (
+          <Text style={styles.empty}>Couldn't read services: {gattSummaryError}</Text>
+        ) : gattSummary === null ? (
+          <Text style={styles.empty}>Reading services…</Text>
+        ) : gattSummary.length === 0 ? (
+          <Text style={styles.empty}>No services found.</Text>
+        ) : (
+          <View style={styles.card}>
+            <Text selectable style={styles.mono}>
+              {formatGattSummary(gattSummary)}
+            </Text>
+          </View>
+        )}
+      </View>
+    </ScrollView>
   );
 }
 
@@ -72,10 +127,23 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  content: {
     padding: spacing(2.5),
   },
   section: {
     marginBottom: spacing(3),
+  },
+  helperText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginBottom: spacing(1.5),
+    lineHeight: 17,
+  },
+  mono: {
+    color: colors.textPrimary,
+    fontSize: 11,
+    fontFamily: Platform.select({ ios: 'Courier', android: 'monospace' }),
   },
   sectionTitle: {
     color: colors.textPrimary,

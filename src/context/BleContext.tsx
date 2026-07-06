@@ -29,6 +29,7 @@ import type {
   PairedDevice,
   ToggleKind,
 } from '../types/bms';
+import type { GattServiceSummary } from '../types/gatt';
 
 const TELEMETRY_POLL_MS = 3000;
 
@@ -38,6 +39,8 @@ interface BleContextValue {
   connectionStatus: ConnectionStatus;
   telemetry: BMSTelemetry | null;
   telemetryError: string | null;
+  gattSummary: GattServiceSummary[] | null;
+  gattSummaryError: string | null;
   permissions: PermissionCheckResult;
   bluetoothState: BluetoothState | null;
   actionLog: ActionLogEntry[];
@@ -67,6 +70,8 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('no_paired_device');
   const [telemetry, setTelemetry] = useState<BMSTelemetry | null>(null);
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
+  const [gattSummary, setGattSummary] = useState<GattServiceSummary[] | null>(null);
+  const [gattSummaryError, setGattSummaryError] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<PermissionCheckResult>({
     granted: false,
     missing: [],
@@ -141,12 +146,24 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   const stopConnector = useCallback(async () => {
     stopTelemetryPolling();
     setTelemetry(null);
+    setGattSummary(null);
+    setGattSummaryError(null);
     connectedDeviceRef.current = null;
     if (connectorRef.current) {
       await connectorRef.current.stop();
       connectorRef.current = null;
     }
   }, [stopTelemetryPolling]);
+
+  const loadGattSummary = useCallback(async (device: Device) => {
+    try {
+      const summary = await bleService.describeDevice(device);
+      setGattSummary(summary);
+      setGattSummaryError(null);
+    } catch (error) {
+      setGattSummaryError(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
 
   // Drive the connect-to-paired-device lifecycle whenever we have a paired
   // device, permissions are granted, and Bluetooth is powered on. Never
@@ -189,9 +206,12 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         connectedDeviceRef.current = device;
         if (device) {
           startTelemetryPolling(device);
+          loadGattSummary(device);
         } else {
           stopTelemetryPolling();
           setTelemetry(null);
+          setGattSummary(null);
+          setGattSummaryError(null);
         }
       },
     );
@@ -284,6 +304,8 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     connectionStatus,
     telemetry,
     telemetryError,
+    gattSummary,
+    gattSummaryError,
     permissions,
     bluetoothState,
     actionLog,

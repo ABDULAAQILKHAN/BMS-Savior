@@ -92,15 +92,25 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            // Populated from ~/.gradle/gradle.properties (see README) once you've
+            // generated a real keystore. Falls back to the debug keystore below
+            // when those properties aren't set, so assembleRelease still works
+            // out of the box for personal sideloading.
+            if (project.hasProperty('MYBMS_UPLOAD_STORE_FILE')) {
+                storeFile file(MYBMS_UPLOAD_STORE_FILE)
+                storePassword MYBMS_UPLOAD_STORE_PASSWORD
+                keyAlias MYBMS_UPLOAD_KEY_ALIAS
+                keyPassword MYBMS_UPLOAD_KEY_PASSWORD
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            signingConfig project.hasProperty('MYBMS_UPLOAD_STORE_FILE') ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }

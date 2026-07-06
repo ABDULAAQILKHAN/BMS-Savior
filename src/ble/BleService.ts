@@ -1,5 +1,6 @@
 import { BleManager, Device, State as BluetoothState, Subscription } from 'react-native-ble-plx';
 import type { DiscoveredDevice } from '../types/bms';
+import type { GattServiceSummary } from '../types/gatt';
 
 /**
  * Thin wrapper around react-native-ble-plx's BleManager. Knows nothing about
@@ -67,6 +68,33 @@ export class BleService {
     const device = await this.manager.connectToDevice(deviceId, { timeout: timeoutMs });
     await device.discoverAllServicesAndCharacteristics();
     return device;
+  }
+
+  /**
+   * Enumerates the real GATT services/characteristics a connected device
+   * exposes. Used to discover the actual UUIDs a BMSProtocol implementation
+   * needs, instead of guessing from general chipset knowledge — device.id
+   * must already be connected with services discovered (e.g. via
+   * connectToKnownDevice).
+   */
+  async describeDevice(device: Device): Promise<GattServiceSummary[]> {
+    const services = await device.services();
+    return Promise.all(
+      services.map(async service => {
+        const characteristics = await service.characteristics();
+        return {
+          serviceUUID: service.uuid,
+          characteristics: characteristics.map(c => ({
+            uuid: c.uuid,
+            isReadable: c.isReadable,
+            isWritableWithResponse: c.isWritableWithResponse,
+            isWritableWithoutResponse: c.isWritableWithoutResponse,
+            isNotifiable: c.isNotifiable,
+            isIndicatable: c.isIndicatable,
+          })),
+        };
+      }),
+    );
   }
 
   async isDeviceConnected(deviceId: string): Promise<boolean> {
